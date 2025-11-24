@@ -1,5 +1,3 @@
-// src/process-order/process.order.route.ts
-
 import {
   FastifyInstance,
   FastifyPluginOptions,

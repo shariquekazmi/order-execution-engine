@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ProcessOrderDto } from "./process.order.dto";
+import { OrderQueue } from "./process.order.queue";
+import { redisClient } from "../services/redis.client";
 
 export class OrderService {
   async processOrder(orderDto: ProcessOrderDto) {
@@ -20,7 +22,16 @@ export class OrderService {
       const orderId = randomUUID();
 
       // 3. (future step) Save to Redis as "queued"
+      await redisClient.hset(`active_order:${orderId}`, {
+        orderId,
+        status: "queued",
+        ...orderDto,
+      });
       // 4. (future step) Push to BullMQ queue
+      await OrderQueue.add("order", {
+        orderId,
+        ...orderDto,
+      });
 
       return {
         orderId,
