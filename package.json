@@ -7,12 +7,11 @@
     "test": "test"
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
-    "worker": "tsx watch src/process-order/process.order.worker.ts",
-    "worker:start": "node dist/process-order/process.order.worker.js",
-    "test": "npm run build && c8 node --test dist/test/**/*.js"
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "dev": "npm run docker:up && tsx watch src/server.ts",
+    "start": "npm run docker:up && node dist/server.js",
+    "worker": "npm run docker:up && tsx watch src/process-order/process.order.worker.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,10 +19,13 @@
   "dependencies": {
     "@fastify/autoload": "^6.0.0",
     "@fastify/sensible": "^6.0.0",
+    "bullmq": "^5.64.1",
     "dotenv": "^17.2.3",
     "fastify": "^5.0.0",
     "fastify-cli": "^7.4.1",
-    "fastify-plugin": "^5.0.0"
+    "fastify-plugin": "^5.0.0",
+    "ioredis": "^5.8.2",
+    "redis": "^5.10.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.8",

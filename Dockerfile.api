@@ -1,0 +1,23 @@
+# ---- Base image ----
+FROM node:20-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Copy package.json and lock file
+COPY package*.json ./
+
+# Install ONLY production dependencies
+RUN npm install --omit=dev
+
+# Copy source code
+COPY . .
+
+# Build TypeScript
+RUN npm run build
+
+# Expose Fastify port
+EXPOSE 3000
+
+# Start API
+CMD ["node", "dist/server.js"]
