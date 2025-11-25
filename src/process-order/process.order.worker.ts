@@ -1,55 +1,143 @@
-import { Worker, QueueEvents } from "bullmq";
+import "reflect-metadata";
+import { AppDataSource } from "../database/datasource";
 import IORedis from "ioredis";
+import { Worker, QueueEvents } from "bullmq";
 import { QUEUE_NAME } from "./process.order.queue";
-import dotenv from "dotenv";
+import { MockDexRouter } from "../services/mock.dexrouter";
+import { OrderHistory } from "../database/entities/order-history.entity";
 
-dotenv.config();
-
+// ---------------- Redis ----------------
 function createWorkerConn() {
-  return new IORedis(process.env.REDIS_URL as string, {
+  return new IORedis(process.env.REDIS_URL || "redis://127.0.0.1:6379", {
     maxRetriesPerRequest: null,
   });
 }
 
 const redis = createWorkerConn();
+const publisher = createWorkerConn();
+const eventConn = createWorkerConn();
 
-const orderWorker = new Worker(
-  QUEUE_NAME,
-  async (job) => {
-    const orderId = job.data.orderId;
-    console.log("Processing", job.data.orderId);
-    // Redis order is processing
-    await redis.hset(`active_order:${orderId}`, {
-      status: "processing",
-    });
+// ---------------- Dex Router ----------------
+const router = new MockDexRouter();
 
-    // fake delay represents DEX routing + execution -> will change once implementing routing logic
-    await new Promise((r) => setTimeout(r, 1500));
+// ---------------- Utility: Publish + Redis Save ----------------
+async function publishAndSet(orderId: string, data: Record<string, any>) {
+  await redis.hset(`active_order:${orderId}`, data);
 
-    // generate mock final price
-    const finalPrice = Math.random() * (10 - 5) + 5;
+  await publisher.publish(
+    `order_updates:${orderId}`,
+    JSON.stringify({ orderId, ...data })
+  );
+}
 
-    // Redis order completed
-    await redis.hset(`active_order:${orderId}`, {
-      status: "completed",
-      finalPrice: finalPrice.toFixed(4),
-    });
+// ---------------- Worker Startup ----------------
+async function startWorker() {
+  try {
+    // 1️⃣ Initialize DB
+    await AppDataSource.initialize();
+    const repo = AppDataSource.getRepository(OrderHistory);
+    console.log("📦 Worker DB ready");
 
-    console.log("Completed", orderId);
+    // 2️⃣ Start BullMQ Worker
+    new Worker(
+      QUEUE_NAME,
+      async (job) => {
+        const { orderId, baseToken, quoteToken, amount, side } = job.data;
 
-    return {
-      orderId,
-      status: "completed",
-      finalPrice,
-    };
-  },
-  {
-    connection: createWorkerConn(),
-    concurrency: 10,
-    limiter: { max: 100, duration: 60_000 },
+        try {
+          console.log("🔥 Processing", orderId);
+
+          // pending was set by API, now routing
+          await publishAndSet(orderId, { status: "routing" });
+
+          // Step 1: DEX Routing
+          const bestQuote = await router.routeBest(
+            baseToken,
+            quoteToken,
+            amount
+          );
+
+          await publishAndSet(orderId, {
+            status: "building",
+            chosenDex: bestQuote.dex,
+            quotePrice: bestQuote.price.toFixed(4),
+          });
+
+          // Step 2: Simulate transaction building
+          await publishAndSet(orderId, { status: "submitted" });
+
+          const result = await router.executeSwap(bestQuote);
+
+          // Step 3: Confirm execution
+          await publishAndSet(orderId, {
+            status: "confirmed",
+            finalPrice: result.executedPrice.toFixed(4),
+            txHash: result.txHash,
+            dex: result.dex,
+          });
+
+          // Step 4: Save into DB
+          await repo.save({
+            orderId,
+            baseToken,
+            quoteToken,
+            amount,
+            side,
+            chosenDex: bestQuote.dex,
+            quotePrice: bestQuote.price,
+            finalPrice: result.executedPrice,
+            txHash: result.txHash,
+            status: "confirmed",
+          });
+
+          console.log("✅ Completed", orderId);
+
+          return {
+            orderId,
+            status: "confirmed",
+            finalPrice: result.executedPrice,
+            txHash: result.txHash,
+            dex: result.dex,
+          };
+        } catch (err) {
+          console.error("❌ Worker processing error", err);
+
+          await publishAndSet(orderId, {
+            status: "failed",
+            errorMessage: String(err),
+          });
+
+          await repo.save({
+            orderId,
+            baseToken,
+            quoteToken,
+            amount,
+            side,
+            status: "failed",
+            errorMessage: String(err),
+          });
+
+          throw err;
+        }
+      },
+      {
+        connection: createWorkerConn(),
+        concurrency: 10,
+        limiter: {
+          max: 100,
+          duration: 60_000, // 100 jobs per minute
+        },
+      }
+    );
+
+    // Queue event listener
+    new QueueEvents(QUEUE_NAME, { connection: eventConn });
+
+    console.log("🚀 Worker is running...");
+  } catch (err) {
+    console.error("❌ Worker failed to start:", err);
+    process.exit(1);
   }
-);
+}
 
-const queueEvents = new QueueEvents(QUEUE_NAME, {
-  connection: createWorkerConn(),
-});
+startWorker();

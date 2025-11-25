@@ -1,8 +1,24 @@
 {
   "extends": "fastify-tsconfig",
+
   "compilerOptions": {
     "outDir": "dist",
-    "sourceMap": true
+    "sourceMap": true,
+    "target": "ES2020",
+
+    "module": "commonjs",
+    "moduleResolution": "node",
+
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "strict": true,
+    "strictPropertyInitialization": false,
+
+    "esModuleInterop": true,
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"]
+
+  "include": ["src/**/*.ts"],
+  "typeRoots": ["./node_modules/@types", "./src/types"]
 }
