@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import AutoLoad, { AutoloadPluginOptions } from "@fastify/autoload";
 import { FastifyPluginAsync, FastifyServerOptions } from "fastify";
+import websocketPlugin from "@fastify/websocket";
+import { AppDataSource } from "./database/datasource";
 
 export interface AppOptions
   extends FastifyServerOptions,
@@ -13,6 +15,14 @@ const app: FastifyPluginAsync<AppOptions> = async (
   opts
 ): Promise<void> => {
   // Place here your custom code!
+  await fastify.register(websocketPlugin);
+
+  fastify.addHook("onReady", async () => {
+    if (!AppDataSource.isInitialized) {
+      await AppDataSource.initialize();
+      fastify.log.info("📦 TypeORM connected to PostgreSQL");
+    }
+  });
 
   // Do not touch the following lines
 
